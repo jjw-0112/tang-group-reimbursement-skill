@@ -1,0 +1,4 @@
+interface:
+  display_name: "课题组个人报销"
+  short_description: "整理发票与附件，生成可补件续跑的个人报销交件包"
+  default_prompt: "Use $tang-group-reimbursement to organize my reimbursement files and create a reviewable package."
