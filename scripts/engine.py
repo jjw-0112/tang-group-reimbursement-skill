@@ -17,6 +17,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
+from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 from xml.etree import ElementTree as ET
 
@@ -48,7 +49,7 @@ ATTACHMENT_HINTS = (
     "测试清单", "合同", "会议邀请函", "会议通知", "地铁行程", "行程列表", "销货清单",
 )
 CATEGORY_ORDER = [
-    "材料费", "快递费", "交通费", "书籍", "差旅费", "文印费", "测试化验加工",
+    "材料费", "日用及两用物品", "快递费", "交通费", "书籍", "差旅费", "文印费", "测试化验加工",
     "版面费/审稿费", "查收查引/专利", "其他", "对公转账",
 ]
 MONEY = r"\d[\d,]*(?:\.\d{1,2})?"
@@ -354,6 +355,27 @@ def _buyer(text: str) -> tuple[str | None, str | None, bool]:
     return buyer_name, tax_id, bool(buyer_name)
 
 
+def _seller(text: str) -> tuple[str | None, str | None]:
+    """Read the sales column from a two-column VAT invoice when it is legible."""
+    head = text[:2000]
+    seller_name = None
+    for line in head.splitlines():
+        names = re.findall(r"名\s*称\s*[:：]\s*(\S+)", line)
+        if len(names) < 2:
+            continue
+        raw = names[1]
+        company = re.match(r"(.+?(?:股份有限公司|有限责任公司|有限公司|公司))", raw)
+        seller_name = company.group(1) if company else re.sub(r"(?:买|购|销|售|方|信|息)+$", "", raw)
+        seller_name = seller_name or None
+        break
+    tax_ids: list[str] = []
+    for line in head.splitlines():
+        if "识别号" in line or "信用代码" in line:
+            tax_ids.extend(re.findall(r"(?<![0-9A-Z])[0-9A-Z]{18}(?![0-9A-Z])", line))
+    seller_tax_id = tax_ids[1] if len(tax_ids) >= 2 else None
+    return seller_name, seller_tax_id
+
+
 def _item_lines(text: str, amount: Decimal | None) -> tuple[list[dict[str, str]], bool]:
     start = re.search(r"项\s*目\s*名\s*称", text)
     if not start:
@@ -482,13 +504,15 @@ def _category(name: str, text: str, items: list[dict[str, str]]) -> tuple[str, l
     if items:
         totals: dict[str, Decimal] = {}
         for item in items:
-            product = item.get("name", "").split("*")[-1]
+            product = item.get("name", "").split("*", 1)[-1]
             if any(x in product for x in ("运费", "收派服务", "邮寄费", "物流服务")):
                 category = "快递费"
             elif any(x in product for x in ("客运服务", "网约车", "地铁", "出租车")):
                 category = "交通费"
             elif any(x in product for x in ("图书", "书籍")):
                 category = "书籍"
+            elif any(x in product for x in ("拖把", "拖布", "湿巾", "湿纸巾", "纸巾", "收纳箱", "整理箱")):
+                category = "日用及两用物品"
             elif any(x in product for x in ("打印", "复印", "文印")):
                 category = "文印费"
             elif any(x in product for x in ("测试费", "检测费", "化验费")):
@@ -542,6 +566,7 @@ def _extract_one(ref: str, ext: str, data: bytes, text: str, pages: list[int] | 
     items, verified = _item_lines(text, amount)
     category, mixed_categories, mixed_ambiguous = _category(name, text, items)
     buyer_name, buyer_tax_id, buyer_explicit = _buyer(text)
+    seller_name, seller_tax_id = _seller(text)
     return {
         "id": sha256((ref + "#" + str(pages) + "#" + sha256(data)).encode("utf-8"))[:16],
         "ref": ref, "aliases": [], "sha256": sha256(data), "ext": ext,
@@ -549,6 +574,7 @@ def _extract_one(ref: str, ext: str, data: bytes, text: str, pages: list[int] | 
         "invoice_number": numbers[0] if len(numbers) == 1 else None,
         "multiple_numbers": numbers if len(numbers) > 1 else [],
         "issue_date": _issue_date(text), "buyer_name": buyer_name, "buyer_tax_id": buyer_tax_id,
+        "seller_name": seller_name, "seller_tax_id": seller_tax_id,
         "buyer_explicit": buyer_explicit,
         "amount": money_str(amount), "filename_amount": money_str(_filename_amount(ref)),
         "items": items, "items_verified": verified,
@@ -653,6 +679,8 @@ def scan(input_dir: Path, output_dir: Path, history_dir: Path | None = None) -> 
     review_path = output_dir / "review.json"
     previous_review = json.loads(review_path.read_text(encoding="utf-8")) if review_path.exists() else {}
     decision_source = previous_review or prior
+    old_run_id = previous_review.get("run_id")
+    run_id = old_run_id if old_run_id and old_run_id != prior.get("run_id") else uuid4().hex
     def record_key(record: dict[str, Any]) -> tuple[str | None, tuple[int, ...]]:
         return record.get("sha256"), tuple(record.get("pages") or [])
     prior_records = {record_key(r): r for r in decision_source.get("records", []) if r.get("sha256")}
@@ -683,7 +711,8 @@ def scan(input_dir: Path, output_dir: Path, history_dir: Path | None = None) -> 
         if old and old.get("sha256") != record["sha256"]:
             candidates.append({"new_id": record["id"], "old_id": old["id"], "invoice_number": record["invoice_number"]})
     draft = {
-        "schema_version": SCHEMA_VERSION, "input_dir": str(input_dir), "output_dir": str(output_dir),
+        "schema_version": SCHEMA_VERSION, "run_id": run_id,
+        "input_dir": str(input_dir), "output_dir": str(output_dir),
         "history_dir": str(history_dir.resolve()) if history_dir else decision_source.get("history_dir"),
         "profile": decision_source.get("profile", {"name": "", "student_id": "", "phone": "", "cutoff_date": ""}),
         "public_invoice_numbers": decision_source.get("public_invoice_numbers", []),

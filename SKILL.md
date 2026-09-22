@@ -16,18 +16,23 @@ description: 为课题组学生从发票和附件文件夹制作可补件续跑�
 1. 询问学生原始材料目录、姓名、学号、电话、**报销截止日期**，以及可选的历史报销目录。原目录不得作为输出目录；不要移动或改名原件。
 2. 运行 `python scripts/reimburse.py scan --input <原目录> [--output <输出目录>] [--history <历史目录>]`。默认输出目录是原目录的同级目录 `<原目录名>_报销输出`。检查生成的 `review.json`，特别是 `needs_review`、`unreviewed_files` 和 `replacement_candidates`。无法读取的图片、未识别附件须人工确认；确认为无关文件时，把路径写入 `ignored_attachment_refs`，不要直接忽略。
 3. 将学生信息、截止日期写入 `review.json` 的 `profile`；向学生**一次性询问哪些发票属于对公转账**，把票号或记录 ID 写入 `public_invoice_numbers` / `public_record_ids`。其余视为个人垫付。不要逐张询问付款方式。
-4. 逐项复核模型和脚本提取的票面金额、商品明细、类别、日期、抬头以及附件关联。只在看到证据后填写记录的 `manual` 字段：`category`、`confirm_mixed_category`、`description`、`invoice_number`、`issue_date`、`claim_amount`、`confirm_filename_amount`、`confirm_claim_amount`、`confirm_payment_amount`、`buyer_name`、`buyer_tax_id`、`confirmed_buyer_absent`、`confirmed_wrong_buyer`、`confirmed_nonreimbursable`、`paper_original_confirmed`、`attachment_refs`、`replacement_for`、`notes`。不清楚的保持待核实；不要为赶进度填造确认值。
-5. 运行 `python scripts/reimburse.py build --review <review.json>`。检查终端摘要、Excel 暂计金额、PDF 缺件事项、未匹配文件、文件对照表和 ZIP。缺件发票进入 Excel 并标“缺件”；待核实和不可报销项不计入金额。PDF 显示“尚不可提交”时，提醒学生补齐或核实后续跑。
+4. 逐项复核模型和脚本提取的票面金额、商品明细、类别、日期、买卖双方以及附件关联。只在看到证据后填写记录的 `manual` 字段：`category`、`confirm_mixed_category`、`description`、`service_subject`、`invoice_number`、`issue_date`、`claim_amount`、`confirm_filename_amount`、`confirm_claim_amount`、`confirm_payment_amount`、`buyer_name`、`buyer_tax_id`、`seller_name`、`seller_tax_id`、`confirmed_buyer_absent`、`confirmed_wrong_buyer`、`confirmed_nonreimbursable`、`paper_original_confirmed`、`research_use_confirmed`、`attachment_refs`、`replacement_for`、`notes`。其中 `research_use_confirmed` 只在负责人确认科研用途后设置；`service_subject` 填经发票、订单、开票方官方资料或报销人确认的具体产品/平台，如向日葵、腾讯会议。不清楚的保持待核实；不要为赶进度填造确认值。
+5. 复核完 `review.json` 再运行 `python scripts/reimburse.py build --review <review.json>`，检查摘要、Excel 暂计金额、PDF、文件对照表和 ZIP。同一次扫描的质检修订再次构建仍是同一版本，旧尝试存 `.drafts`，不要把制作迭代当成学生补件新版。缺件和待核实票正常编号、重命名、计入有依据的金额；待核实原因只在 Excel 备注详列，不另建待核实发票目录。金额不可靠时留空并标“金额待核”，不可编造；确认不可报销的票不计入。PDF 显示“尚不可提交”时，提醒学生处理未结事项。
 
 ## 补件续跑
 
-学生向同一原目录追加附件或更正发票后，重新运行 `scan`，指向原输出目录。脚本读取 `state.json`，沿用个人信息和已确认判断，重新匹配附件，并指出可能替换的旧票。对替换关系向学生确认，在新记录的 `manual.replacement_for` 填旧记录 ID；不要仅凭相似名称自动替换。再次 `build` 会生成 v2、v3 等新包、重新连续编号，并附旧新编号对照。旧版本保留。第一版不解析负责人或财务的退回意见。
+学生完成上次委托后，向同一原目录追加附件或更正发票，再运行 `scan` 指向原输出目录。脚本读取 `state.json`，沿用个人信息和已确认判断，重新匹配附件，并指出可能替换的旧票。对替换关系向学生确认，在新记录的 `manual.replacement_for` 填旧记录 ID；不要仅凭相似名称自动替换。新一次扫描与构建才生成 v2、v3 等正式包、重新连续编号，并附旧新编号对照；旧正式版本保留。首次委托的包为 v1，同次制作中的反复构建不会变成 v2。第一版不解析负责人或财务的退回意见。
 
 ## 复核重点
 
-- Excel 保持“一张发票一行”、全局连续编号；材料费中含达到门槛的商品行的整张发票排在组后部，备注指出具体商品。个人信息只填在明细页现有首行。
+- Excel 保持“一张发票一行”、全局连续编号；同一类别、同一简要品名的票连续排列，先按品名成组，组内可把达到材料手续门槛的票后排，不能让“螺丝1—8”等系列中间穿插别的品名。备注指出达到门槛的具体商品。个人信息只填在明细页现有首行。同类发票名称去掉末尾单位、无助识别的型号及旧版字母/数字尾号，再按当前类别与清晰品名依次加阿拉伯数字区分；Excel 简要名称与重命名的发票副本须完全一致，全局编号另保留。
+- 根据商品实际名称，把明显属于日用品或科研与生活两用的物品单列“日用及两用物品”，不要混入材料费；不能只凭税收分类自动定性。该类票暂计入金额，备注“待确认：科研用途”，直到负责人确认。入库和高值材料门槛仍逐商品行检查。
+- 每张发票的 Excel 备注须简列已匹配的附件类型和份数，如行程单、支付记录截图、论文录用通知；缺件与其他复核提醒接在其后。不要把未匹配附件写成已提供。明细字体统一为中文黑体、英文和数字 Times New Roman，文字黑色；分类标题、列标题和合计标题加粗，标题高亮沿用 V6 原版浅青绿色。
+- 核对销售方税号、公司名称和开票日期；同一销售方同日开出的多张票，在每张票的 Excel 备注写同一组号、组内张数、公司及日期。不同销售方或日期不合组；证据不足时不猜测。
+- 网络/软件服务发票的名称须写明具体平台或产品主体。可以用开票公司查官方资料，但同一公司经营多种产品时不能仅凭公司名推断本票购买的是哪一种；结合订单、票面或报销人确认后再填 `service_subject`。未确认时保留待核实，不用“网络服务费”这种泛称进入正式明细。
+- 构建后验证 Excel 能被真实 Microsoft Excel 打开且无修复提示（本机有 Excel 时）；仅用 openpyxl 成功读取不足以证明兼容性。混合字体字符串的空格不能单独形成富文本片段。
 - 普通增值税发票抬头确认为缺失或不符时列“不可报销”；识别不清则“待核实”。火车、机票和出租车等按票种规则检查。
-- 票面与旧文件名或付款证明不一致时，使用票面提取值并先列待核实。满 1000 元个人垫付发票按 V6 列不可报销；所有对公票需要付款依据。
+- 票面与旧文件名或付款证明不一致时，使用有依据的票面值暂计，并在 Excel 备注标待核实。个人垫付满 1000 元不因此禁报；单张发票票面总价**超过 1000 元**须补支付记录，不论付款方式。材料类仅当某商品**含税单价满 1000 元**才提示高值耗材登记，不得用整票总价代替单价；商品含税行金额满 500 元另提示入库。所有对公票也需要付款依据。
 - 逐票检查适用附件和纸票原件。对未匹配附件、疑似历史重复、跨年度票据、截止日期之后票据写出具体原因。仅做离线检查，PDF 必须写明未做税务平台验真。
 
 若需要修改规则，先更新 [报销规则](references/rules-v6.md) 中的版本和来源，再更新脚本与测试；不要把某次报销的例外永久写成通用规则。
